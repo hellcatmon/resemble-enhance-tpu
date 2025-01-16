@@ -1,11 +1,14 @@
 import gradio as gr
 import torch
 import torchaudio
+import torch_xla.core.xla_model as xm
 
 from resemble_enhance.enhancer.inference import denoise, enhance
 
 if torch.cuda.is_available():
     device = "cuda"
+elif xm.xla_device_hw() == "TPU":
+    device = xm.xla_device()
 else:
     device = "cpu"
 
@@ -22,7 +25,8 @@ def _fn(path, solver, nfe, tau, denoising):
     dwav = dwav.mean(dim=0)
 
     wav1, new_sr = denoise(dwav, sr, device)
-    wav2, new_sr = enhance(dwav, sr, device, nfe=nfe, solver=solver, lambd=lambd, tau=tau)
+    wav2, new_sr = enhance(dwav, sr, device, nfe=nfe,
+                           solver=solver, lambd=lambd, tau=tau)
 
     wav1 = wav1.cpu().numpy()
     wav2 = wav2.cpu().numpy()
@@ -33,9 +37,12 @@ def _fn(path, solver, nfe, tau, denoising):
 def main():
     inputs: list = [
         gr.Audio(type="filepath", label="Input Audio"),
-        gr.Dropdown(choices=["Midpoint", "RK4", "Euler"], value="Midpoint", label="CFM ODE Solver"),
-        gr.Slider(minimum=1, maximum=128, value=64, step=1, label="CFM Number of Function Evaluations"),
-        gr.Slider(minimum=0, maximum=1, value=0.5, step=0.01, label="CFM Prior Temperature"),
+        gr.Dropdown(choices=["Midpoint", "RK4", "Euler"],
+                    value="Midpoint", label="CFM ODE Solver"),
+        gr.Slider(minimum=1, maximum=128, value=64, step=1,
+                  label="CFM Number of Function Evaluations"),
+        gr.Slider(minimum=0, maximum=1, value=0.5,
+                  step=0.01, label="CFM Prior Temperature"),
         gr.Checkbox(value=False, label="Denoise Before Enhancement"),
     ]
 
