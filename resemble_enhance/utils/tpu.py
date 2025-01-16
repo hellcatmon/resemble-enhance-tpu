@@ -21,8 +21,22 @@ def get_num_tpu_cores():
         return 1
 
 
+def setup_tpu_port():
+    """Configure TPU port settings"""
+    if 'TPU_METRICS_PORT' not in os.environ:
+        # Pick a random port to avoid conflicts
+        port = 8471 + int(os.environ.get('LOCAL_RANK', '0'))
+        os.environ['TPU_METRICS_PORT'] = str(port)
+
+    # Configure XLA port if not set
+    if 'XRT_TPU_CONFIG' not in os.environ:
+        tpu_config = f"tpu_worker;0;localhost:{get_free_port()}"
+        os.environ['XRT_TPU_CONFIG'] = tpu_config
+
+
 def setup_tpu():
     """Initialize TPU device and return device object"""
+    setup_tpu_port()
     device = xm.xla_device()
     return device
 

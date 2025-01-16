@@ -46,6 +46,7 @@ def process_batch_tpu(paths: List[Path], args, device):
 
 def _mp_fn(rank, args):
     """Main TPU process function"""
+    os.environ['TPU_VISIBLE_DEVICES'] = str(rank)
     device = setup_tpu()
     world_size = get_tpu_world_size()
 
