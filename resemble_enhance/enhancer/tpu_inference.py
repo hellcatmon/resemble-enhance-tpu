@@ -1,18 +1,24 @@
 import os
 import torch
-import torch_xla.core.xla_model as xm
-import torch_xla.distributed.parallel_loader as pl
+import argparse
 from pathlib import Path
 import torchaudio
 from tqdm import tqdm
 from typing import List
-from resemble_enhance.utils.tpu import setup_tpu, get_tpu_rank, get_tpu_world_size, get_num_tpu_cores
+
+try:
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    xla_available = True
+except ImportError:
+    print("torch_xla not found. Running on CPU/GPU.")
+    xla_available = False
+
 from resemble_enhance.enhancer.inference import enhance, denoise
-import argparse  # Import argparse
 
 
-def process_batch_tpu(paths: List[Path], args, device):
-    """Process a batch of files on TPU"""
+def process_batch(paths: List[Path], args, device):
+    """Process a batch of files on the specified device"""
     results = []
     for path in paths:
         out_path = args.out_dir / path.relative_to(args.in_dir)
@@ -46,10 +52,13 @@ def process_batch_tpu(paths: List[Path], args, device):
 
 
 def _mp_fn(rank, args):
-    """Main TPU process function"""
-    os.environ['TPU_VISIBLE_DEVICES'] = str(rank)
-    device = setup_tpu()
-    world_size = get_tpu_world_size()
+    """Main process function for multi-processing"""
+    if xla_available:
+        device = xm.xla_device()
+        world_size = xm.xrt_world_size()
+    else:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        world_size = 1  # Single process
 
     # Get all audio paths
     paths = sorted(args.in_dir.glob(f"**/*{args.suffix}"))
@@ -58,7 +67,7 @@ def _mp_fn(rank, args):
             print(f"No {args.suffix} files found in: {args.in_dir}")
         return
 
-    # Split paths across TPU cores
+    # Split paths across processes
     chunk_size = len(paths) // world_size
     start_idx = rank * chunk_size
     end_idx = start_idx + chunk_size if rank < world_size - 1 else len(paths)
@@ -68,22 +77,26 @@ def _mp_fn(rank, args):
     batch_size = 16
     for i in range(0, len(paths), batch_size):
         batch_paths = paths[i:i + batch_size]
-        results = process_batch_tpu(batch_paths, args, device)
+        results = process_batch(batch_paths, args, device)
 
         # Save results
         for out_path, hwav, sr in results:
             out_path.parent.mkdir(parents=True, exist_ok=True)
-            xm.save(hwav[None], out_path)
+            # Use torch.save for broader compatibility
+            torch.save((hwav, sr), out_path)
 
-        # Sync TPU cores
-        xm.mark_step()
+        # Sync processes if using XLA
+        if xla_available:
+            xm.mark_step()
 
     if rank == 0:
-        print(f"🌟 Enhancement done! {len(paths)} files processed on {world_size} TPU cores")
+        print(f"🌟 Enhancement done! {len(paths)} files processed on {'TPU' if xla_available else 'CPU/GPU'}")
+        if xla_available:
+            print(f"  {world_size} TPU cores were used.")
 
 
 def main_tpu():
-    """TPU-enabled main function"""
+    """Main function to handle argument parsing and process launching"""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument('in_dir', type=Path, help='Input directory')
@@ -106,16 +119,15 @@ def main_tpu():
                         help='Directory to save intermediate files')
 
     args = parser.parse_args()
+    args.out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Get number of available TPU cores
-    num_cores = get_num_tpu_cores()
-    if num_cores < 1:
-        raise RuntimeError("No TPU cores detected!")
-
-    print(f"Launching distributed processing on {num_cores} TPU cores")
-
-    # Launch TPU processes using detected core count
-    xmp.spawn(_mp_fn, args=(args,), nprocs=num_cores)
+    if xla_available:
+        num_cores = int(os.environ.get('XRT_NUM_DEVICES', xm.xrt_world_size()))
+        print(f"Launching distributed processing on {num_cores} TPU cores")
+        xmp.spawn(_mp_fn, args=(args,), nprocs=num_cores, start_method='fork')
+    else:
+        print("Running on CPU/GPU.")
+        _mp_fn(0, args)  # Run directly on single process
 
 
 if __name__ == "__main__":
