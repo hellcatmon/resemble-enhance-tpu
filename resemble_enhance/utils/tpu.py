@@ -1,4 +1,5 @@
 import os
+import socket
 import torch
 import torch_xla
 import torch_xla.core.xla_model as xm
@@ -21,6 +22,15 @@ def get_num_tpu_cores():
         return 1
 
 
+def get_free_port():
+    """Get an available port."""
+    s = socket.socket()
+    s.bind(('', 0))        # Bind to a free port provided by the host.
+    location = s.getsockname()
+    s.close()
+    return location[1]
+
+
 def setup_tpu_port():
     """Configure TPU port settings"""
     if 'TPU_METRICS_PORT' not in os.environ:
@@ -30,7 +40,10 @@ def setup_tpu_port():
 
     # Configure XLA port if not set
     if 'XRT_TPU_CONFIG' not in os.environ:
-        tpu_config = f"tpu_worker;0;localhost:{get_free_port()}"
+        # Use a fixed port for simplicity, adjust if needed for multi-host setup
+        # It's important this port doesn't conflict with TPU_METRICS_PORT
+        xla_port = 9666  # Using a different default port
+        tpu_config = f"tpu_worker;0;localhost:{xla_port}"
         os.environ['XRT_TPU_CONFIG'] = tpu_config
 
 

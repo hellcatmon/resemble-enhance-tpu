@@ -6,8 +6,9 @@ from pathlib import Path
 import torchaudio
 from tqdm import tqdm
 from typing import List
-from ..utils.tpu import setup_tpu, get_tpu_rank, get_tpu_world_size, get_num_tpu_cores
-from .inference import enhance, denoise
+from resemble_enhance.utils.tpu import setup_tpu, get_tpu_rank, get_tpu_world_size, get_num_tpu_cores
+from resemble_enhance.enhancer.inference import enhance, denoise
+import argparse  # Import argparse
 
 
 def process_batch_tpu(paths: List[Path], args, device):
@@ -78,14 +79,33 @@ def _mp_fn(rank, args):
         xm.mark_step()
 
     if rank == 0:
-        print(f"🌟 Enhancement done! {len(paths)} files processed on {world_size} TPU cores")
+        print(f"🌟 Enhancement done! {
+              len(paths)} files processed on {world_size} TPU cores")
 
 
 def main_tpu():
     """TPU-enabled main function"""
     parser = argparse.ArgumentParser(
         formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    # [Reference argument setup from __main__.py]
+    parser.add_argument('in_dir', type=Path, help='Input directory')
+    parser.add_argument('out_dir', type=Path, help='Output directory')
+    parser.add_argument('--suffix', type=str,
+                        default=".wav", help='Audio file suffix')
+    parser.add_argument('--parallel_mode', action='store_true',
+                        help='Skip existing files in output directory')
+    parser.add_argument('--denoise_only', action='store_true',
+                        help='Run only the denoiser')
+    parser.add_argument('--nfe', type=int, default=32,
+                        help='Number of function evaluations for DiffWave')
+    parser.add_argument('--solver', type=str,
+                        default='midpoint', help='Solver type for DiffWave')
+    parser.add_argument('--lambd', type=float, default=0.99,
+                        help='Lambda parameter for DiffWave')
+    parser.add_argument('--tau', type=float, default=1.0,
+                        help='Tau parameter for DiffWave')
+    parser.add_argument('--run_dir', type=Path, default='./run',
+                        help='Directory to save intermediate files')
+
     args = parser.parse_args()
 
     # Get number of available TPU cores
@@ -97,3 +117,7 @@ def main_tpu():
 
     # Launch TPU processes using detected core count
     xmp.spawn(_mp_fn, args=(args,), nprocs=num_cores)
+
+
+if __name__ == "__main__":
+    main_tpu()
