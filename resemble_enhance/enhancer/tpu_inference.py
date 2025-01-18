@@ -79,8 +79,7 @@ def _mp_fn(rank, args):
         xm.mark_step()
 
     if rank == 0:
-        print(f"🌟 Enhancement done! {
-              len(paths)} files processed on {world_size} TPU cores")
+        print(f"🌟 Enhancement done! {len(paths)} files processed on {world_size} TPU cores")
 
 
 def main_tpu():
